@@ -1,6 +1,8 @@
 <script lang="ts">
   import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
+  import { check, type Update } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
 
   type LocalProfile = {
     game_short_name: string;
@@ -76,6 +78,34 @@
   listen<SyncProgressEvent>("sync-progress", (event) => {
     syncProgress = event.payload;
   });
+
+  let pendingUpdate = $state<Update | null>(null);
+  let updateInstalling = $state(false);
+  let updateError = $state("");
+
+  async function checkForUpdate() {
+    try {
+      pendingUpdate = await check();
+    } catch (e) {
+      // Don't nag the user if the check itself fails (e.g. offline) --
+      // this runs silently on every launch, so a network hiccup shouldn't
+      // surface as an error banner.
+      console.error("update check failed", e);
+    }
+  }
+
+  async function installUpdate() {
+    if (!pendingUpdate) return;
+    updateInstalling = true;
+    updateError = "";
+    try {
+      await pendingUpdate.downloadAndInstall();
+      await relaunch();
+    } catch (e) {
+      updateError = String(e);
+      updateInstalling = false;
+    }
+  }
 
   async function loadProfiles() {
     error = "";
@@ -202,11 +232,24 @@
 
   loadProfiles();
   loadFriends();
+  checkForUpdate();
 </script>
 
 <main class="container">
   <h1>modsync</h1>
   <p class="subtitle">Detected r2modman profiles on this machine</p>
+
+  {#if pendingUpdate}
+    <div class="update-banner">
+      <span>Update available: v{pendingUpdate.version}</span>
+      <button onclick={installUpdate} disabled={updateInstalling}>
+        {updateInstalling ? "Updating..." : "Update & restart"}
+      </button>
+      {#if updateError}
+        <span class="error">{updateError}</span>
+      {/if}
+    </div>
+  {/if}
 
   {#if loading}
     <p>Scanning...</p>
@@ -416,6 +459,18 @@
     color: #c0392b;
   }
 
+  .update-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 1rem;
+    padding: 0.6rem 1rem;
+    border-radius: 8px;
+    background: #eaf2ff;
+    border: 1px solid #b9d3ff;
+    font-size: 0.9rem;
+  }
+
   .profile-list {
     list-style: none;
     padding: 0;
@@ -612,6 +667,12 @@
     .friend-list li {
       background: #1f1f1f;
       border-color: #3a3a3a;
+      color: #f6f6f6;
+    }
+
+    .update-banner {
+      background: #1c2a40;
+      border-color: #2f4a70;
       color: #f6f6f6;
     }
   }
