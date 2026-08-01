@@ -3,6 +3,34 @@
   import { listen } from "@tauri-apps/api/event";
   import { check, type Update } from "@tauri-apps/plugin-updater";
   import { relaunch } from "@tauri-apps/plugin-process";
+  import { error as logError, warn as logWarn } from "@tauri-apps/plugin-log";
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
+  import { appLogDir, join } from "@tauri-apps/api/path";
+
+  /** Logs a failure to the on-disk log file (see logDir below) and
+   * returns its message, so every UI error path both shows the user
+   * something and leaves a trail a friend can hand over when reporting
+   * a bug, instead of it vanishing the moment the toast closes. */
+  function reportError(context: string, e: unknown): string {
+    const message = String(e);
+    logError(`${context}: ${message}`);
+    return message;
+  }
+
+  async function openLogFile() {
+    try {
+      await revealItemInDir(await join(await appLogDir(), "modsync.log"));
+    } catch (e) {
+      logWarn(`openLogFile failed: ${String(e)}`);
+    }
+  }
+
+  window.addEventListener("error", (e) => {
+    logError(`window error: ${e.message}`);
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    logError(`unhandled rejection: ${String(e.reason)}`);
+  });
 
   type LocalProfile = {
     game_short_name: string;
@@ -102,7 +130,7 @@
       await pendingUpdate.downloadAndInstall();
       await relaunch();
     } catch (e) {
-      updateError = String(e);
+      updateError = reportError("installUpdate", e);
       updateInstalling = false;
     }
   }
@@ -113,7 +141,7 @@
     try {
       profiles = await invoke<LocalProfile[]>("list_profiles");
     } catch (e) {
-      error = String(e);
+      error = reportError("loadProfiles", e);
     } finally {
       loading = false;
     }
@@ -132,7 +160,7 @@
         profilePath: p.path,
       });
     } catch (e) {
-      error = String(e);
+      error = reportError("selectProfile", e);
     }
   }
 
@@ -146,7 +174,7 @@
         profilePath: selected.profile.path,
       });
     } catch (e) {
-      shareError = String(e);
+      shareError = reportError("shareProfile", e);
     } finally {
       sharing = false;
     }
@@ -157,7 +185,7 @@
     try {
       friends = await invoke<Friend[]>("list_friends");
     } catch (e) {
-      friendsError = String(e);
+      friendsError = reportError("loadFriends", e);
     }
   }
 
@@ -173,7 +201,7 @@
       newFriendCode = "";
       newFriendNickname = "";
     } catch (e) {
-      friendsError = String(e);
+      friendsError = reportError("addFriend", e);
     }
   }
 
@@ -182,7 +210,7 @@
     try {
       friends = await invoke<Friend[]>("remove_friend", { shareCode: code });
     } catch (e) {
-      friendsError = String(e);
+      friendsError = reportError("removeFriend", e);
     }
   }
 
@@ -200,7 +228,7 @@
         friendShareCode: friend.share_code,
       });
     } catch (e) {
-      syncPlanError = String(e);
+      syncPlanError = reportError("previewSync", e);
     } finally {
       diffing = false;
     }
@@ -223,7 +251,7 @@
       });
       syncPlan = null;
     } catch (e) {
-      syncExecError = String(e);
+      syncExecError = reportError("runSync", e);
     } finally {
       syncing = false;
       syncProgress = null;
@@ -431,6 +459,11 @@
       </ul>
     {/if}
   </section>
+
+  <section class="diagnostics">
+    <button class="log-btn" onclick={openLogFile}>Open log file</button>
+    <span class="muted">Something broken? Grab this file and send it over.</span>
+  </section>
 </main>
 
 <style>
@@ -593,6 +626,20 @@
     padding-top: 1.5rem;
   }
 
+  .diagnostics {
+    margin-top: 2rem;
+    padding-top: 1rem;
+    border-top: 1px solid #e5e5e5;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .log-btn {
+    font-size: 0.85rem;
+    padding: 0.4rem 0.8rem;
+  }
+
   .add-friend-row {
     display: flex;
     gap: 0.5rem;
@@ -659,7 +706,8 @@
 
     .friends,
     .sync-picker,
-    .sync-plan {
+    .sync-plan,
+    .diagnostics {
       border-top-color: #3a3a3a;
     }
 

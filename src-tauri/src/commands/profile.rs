@@ -12,35 +12,40 @@ pub struct ProfileSummary {
 
 #[tauri::command]
 pub fn list_profiles() -> Result<Vec<LocalProfile>, String> {
-    r2modman_paths::list_local_profiles().map_err(|e| e.to_string())
+    super::log_err(
+        "list_profiles",
+        r2modman_paths::list_local_profiles().map_err(|e| e.to_string()),
+    )
 }
 
 #[tauri::command]
 pub fn get_profile_summary(profile_path: String) -> Result<ProfileSummary, String> {
-    let path = Path::new(&profile_path);
-    let mods = mods_yml::read_mods_yml(path).map_err(|e| e.to_string())?;
-    let community_slug = mods_yml::find_community_slug(&mods);
+    super::log_err("get_profile_summary", (|| {
+        let path = Path::new(&profile_path);
+        let mods = mods_yml::read_mods_yml(path).map_err(|e| e.to_string())?;
+        let community_slug = mods_yml::find_community_slug(&mods);
 
-    // Re-derive the LocalProfile shell from the path so the frontend gets
-    // a consistent shape whether it came from list_profiles or here.
-    let profile_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let game_short_name = path
-        .parent() // profiles/
-        .and_then(|p| p.parent()) // <GameShortName>/
-        .and_then(|p| p.file_name())
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
+        // Re-derive the LocalProfile shell from the path so the frontend gets
+        // a consistent shape whether it came from list_profiles or here.
+        let profile_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let game_short_name = path
+            .parent() // profiles/
+            .and_then(|p| p.parent()) // <GameShortName>/
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
 
-    Ok(ProfileSummary {
-        profile: LocalProfile {
-            game_short_name,
-            profile_name,
-            path: profile_path,
-        },
-        community_slug,
-        mods,
-    })
+        Ok(ProfileSummary {
+            profile: LocalProfile {
+                game_short_name,
+                profile_name,
+                path: profile_path,
+            },
+            community_slug,
+            mods,
+        })
+    })())
 }

@@ -17,30 +17,32 @@ fn game_short_name_from_path(path: &Path) -> String {
 
 #[tauri::command]
 pub async fn push_profile(app: AppHandle, profile_path: String) -> Result<String, String> {
-    let path = Path::new(&profile_path);
-    let mods = mods_yml::read_mods_yml(path).map_err(|e| e.to_string())?;
-    let community_slug = mods_yml::find_community_slug(&mods)
-        .ok_or("could not determine this profile's Thunderstore community")?;
+    super::log_err("push_profile", async {
+        let path = Path::new(&profile_path);
+        let mods = mods_yml::read_mods_yml(path).map_err(|e| e.to_string())?;
+        let community_slug = mods_yml::find_community_slug(&mods)
+            .ok_or("could not determine this profile's Thunderstore community")?;
 
-    let profile_name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-    let game_short_name = game_short_name_from_path(path);
+        let profile_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let game_short_name = game_short_name_from_path(path);
 
-    let identity = identity::get_or_create_identity(&app, None).await?;
-    let payload = supabase_client::build_push_payload(&mods);
+        let identity = identity::get_or_create_identity(&app, None).await?;
+        let payload = supabase_client::build_push_payload(&mods);
 
-    supabase_client::upsert_synced_profile(
-        &identity,
-        &game_short_name,
-        &community_slug,
-        &profile_name,
-        &payload,
-    )
-    .await?;
+        supabase_client::upsert_synced_profile(
+            &identity,
+            &game_short_name,
+            &community_slug,
+            &profile_name,
+            &payload,
+        )
+        .await?;
 
-    Ok(identity.share_code)
+        Ok(identity.share_code)
+    }.await)
 }
 
 /// Fetches a friend's synced profile for the same game as the local
@@ -52,19 +54,21 @@ pub async fn fetch_friend_diff(
     profile_path: String,
     friend_share_code: String,
 ) -> Result<SyncPlan, String> {
-    let path = Path::new(&profile_path);
-    let local_mods = mods_yml::read_mods_yml(path).map_err(|e| e.to_string())?;
-    let game_short_name = game_short_name_from_path(path);
+    super::log_err("fetch_friend_diff", async {
+        let path = Path::new(&profile_path);
+        let local_mods = mods_yml::read_mods_yml(path).map_err(|e| e.to_string())?;
+        let game_short_name = game_short_name_from_path(path);
 
-    let friend_profile = supabase_client::get_synced_profile(&friend_share_code, &game_short_name)
-        .await?
-        .ok_or_else(|| {
-            format!(
-                "no synced profile found for that friend code and game ({game_short_name}) -- have they shared this game's profile yet?"
-            )
-        })?;
+        let friend_profile = supabase_client::get_synced_profile(&friend_share_code, &game_short_name)
+            .await?
+            .ok_or_else(|| {
+                format!(
+                    "no synced profile found for that friend code and game ({game_short_name}) -- have they shared this game's profile yet?"
+                )
+            })?;
 
-    Ok(diff::diff_against_friend(&local_mods, &friend_profile.mods))
+        Ok(diff::diff_against_friend(&local_mods, &friend_profile.mods))
+    }.await)
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -229,31 +233,44 @@ pub async fn execute_sync(
     profile_path: String,
     friend_share_code: String,
 ) -> Result<SyncSummary, String> {
-    let path = Path::new(&profile_path).to_path_buf();
-    let game_short_name = game_short_name_from_path(&path);
+    let result = async {
+        let path = Path::new(&profile_path).to_path_buf();
+        let game_short_name = game_short_name_from_path(&path);
 
-    let local_mods = mods_yml::read_mods_yml(&path).map_err(|e| e.to_string())?;
-    let community_slug = mods_yml::find_community_slug(&local_mods)
-        .ok_or("could not determine this profile's Thunderstore community")?;
+        let local_mods = mods_yml::read_mods_yml(&path).map_err(|e| e.to_string())?;
+        let community_slug = mods_yml::find_community_slug(&local_mods)
+            .ok_or("could not determine this profile's Thunderstore community")?;
 
-    let friend_profile = supabase_client::get_synced_profile(&friend_share_code, &game_short_name)
-        .await?
-        .ok_or("no synced profile found for that friend code and game")?;
+        let friend_profile = supabase_client::get_synced_profile(&friend_share_code, &game_short_name)
+            .await?
+            .ok_or("no synced profile found for that friend code and game")?;
 
-    let plan = diff::plan_execution(&local_mods, &friend_profile.mods);
-    let client = reqwest::Client::new();
+        let plan = diff::plan_execution(&local_mods, &friend_profile.mods);
+        let client = reqwest::Client::new();
 
-    apply_execution_plan(&path, &community_slug, local_mods, &plan, &client, |step, current, total| {
-        let _ = app.emit(
-            "sync-progress",
-            SyncProgressEvent {
-                step: step.to_string(),
-                current,
-                total,
-            },
+        apply_execution_plan(&path, &community_slug, local_mods, &plan, &client, |step, current, total| {
+            let _ = app.emit(
+                "sync-progress",
+                SyncProgressEvent {
+                    step: step.to_string(),
+                    current,
+                    total,
+                },
+            );
+        })
+        .await
+    }
+    .await;
+
+    if let Ok(summary) = &result {
+        log::info!(
+            "execute_sync ok for {profile_path}: {} installed/updated, {} disabled, {} reenabled",
+            summary.installed_or_updated,
+            summary.disabled,
+            summary.reenabled
         );
-    })
-    .await
+    }
+    super::log_err("execute_sync", result)
 }
 
 #[cfg(test)]
