@@ -117,7 +117,13 @@ mod tests {
     /// writes (not just what the docs/observed sample said).
     #[test]
     fn parses_real_repo_profile() {
-        let home = std::env::var("HOME").expect("HOME not set");
+        // HOME isn't set on Windows CI runners (they use USERPROFILE
+        // instead) -- treat that the same as "no real profile here" rather
+        // than panicking, consistent with the machine-state skip below.
+        let Some(home) = std::env::var("HOME").ok() else {
+            eprintln!("skipping: no HOME env var on this machine");
+            return;
+        };
         let path = Path::new(&home)
             .join(".config/r2modmanPlus-local/REPO/profiles/Default");
         if !path.join("mods.yml").is_file() {
