@@ -32,6 +32,11 @@ jobs:
 
       - name: Build and bundle
         uses: tauri-apps/tauri-action@v0
+        env:
+          # createUpdaterArtifacts is on in tauri.conf.json, so every
+          # `tauri build` needs this to sign the updater bundle now, even
+          # this plain verification build that doesn't publish anything.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
